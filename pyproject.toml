@@ -1,0 +1,36 @@
+[tool.poetry]
+name = "obtainium-serverside"
+version = "0.1.0"
+description = "Controller-side Android APK update resolver for automation workflows"
+authors = ["The Nexus Labs"]
+license = "MIT"
+readme = "README.md"
+packages = [{ include = "obtainium_serverside" }]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+
+[tool.poetry.group.dev.dependencies]
+black = "^26.0.0"
+mypy = "^1.18.2"
+pytest = "^8.4.2"
+
+[tool.poetry.scripts]
+obtainium-serverside = "obtainium_serverside.cli:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["obtainium_serverside"]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
