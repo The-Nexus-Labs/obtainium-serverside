@@ -1,0 +1,8 @@
+.venv/
+.poetry-bootstrap/
+.pytest_cache/
+.mypy_cache/
+dist/
+build/
+__pycache__/
+*.pyc
