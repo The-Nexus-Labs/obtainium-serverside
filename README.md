@@ -1,8 +1,13 @@
-# obtainium-serverside
+<h1 align="center">📦 obtainium-serverside</h1>
 
-📦 Small Python CLI for resolving Android app updates and optionally downloading APKs for automation workflows.
+<p align="center">
+Small Python CLI for resolving Android app updates and optionally downloading APKs for automation workflows.
+</p>
 
-## ✨ What It Does
+> [!WARNING]
+> **Vibe-coded project. No guarantees.**
+
+## ✨ What it does
 
 - compares desired apps with installed versions
 - resolves the latest APK via a provider
@@ -51,7 +56,7 @@ poetry run python -m obtainium_serverside --config config.json --installed insta
 }
 ```
 
-## 📱 Installed Input
+## 📱 Installed input
 
 ```json
 {
@@ -66,7 +71,7 @@ poetry run python -m obtainium_serverside --config config.json --installed insta
 
 If an app is missing, it is treated as not installed.
 
-## 🧩 Provider Options
+## 🧩 Provider options
 
 ### `github`
 
