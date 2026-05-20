@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from .base import BaseProvider
+from .fdroid import FDroidProvider
 from .github import GitHubReleasesProvider
 from .loxone import LoxoneProvider
 
 PROVIDER_REGISTRY: dict[str, BaseProvider] = {
+    "fdroid": FDroidProvider(),
     "github": GitHubReleasesProvider(),
     "loxone": LoxoneProvider(),
 }
