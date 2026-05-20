@@ -37,7 +37,9 @@ class _FDroidVersionsParser(HTMLParser):
         if tag != "a" or self._current_href is None:
             return
 
-        link_text = " ".join(part.strip() for part in self._current_link_parts if part.strip()).strip()
+        link_text = " ".join(
+            part.strip() for part in self._current_link_parts if part.strip()
+        ).strip()
         href = self._current_href.strip()
         text_snapshot = " ".join(part.strip() for part in self._text_parts if part.strip())
         version_match = VERSION_LINE_RE.search(text_snapshot)
