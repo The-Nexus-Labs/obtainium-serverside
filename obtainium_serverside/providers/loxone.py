@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+import json
 import re
+from html import unescape
 from html.parser import HTMLParser
+from typing import Any
 
 from obtainium_serverside.http import HttpClient
 from obtainium_serverside.models import AppDefinition, ResolvedRelease
@@ -10,6 +14,26 @@ from .base import BaseProvider
 
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 VERSION_RE = re.compile(r"Loxone App\s+(.+?)\s+for Android(?:\s+-.*)?$", re.IGNORECASE)
+STRUCTURED_DOWNLOAD_CLASS = "loxone-software-download-root"
+
+
+class _StructuredConfigParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.payloads: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "div":
+            return
+
+        attr_map = dict(attrs)
+        class_name = attr_map.get("class") or ""
+        if STRUCTURED_DOWNLOAD_CLASS not in class_name.split():
+            return
+
+        payload = attr_map.get("data-config")
+        if payload:
+            self.payloads.append(payload)
 
 
 class _SectionParser(HTMLParser):
@@ -72,6 +96,11 @@ class LoxoneProvider(BaseProvider):
     ) -> ResolvedRelease:
         channel = str(app_definition.provider_config.get("channel", "release")).strip().lower()
         html = http_client.get_text(app_definition.source_url)
+
+        structured_release = self._resolve_from_structured_downloads(html, channel=channel)
+        if structured_release is not None:
+            return structured_release
+
         parser = _SectionParser()
         parser.feed(html)
         parser.close()
@@ -105,6 +134,93 @@ class LoxoneProvider(BaseProvider):
         raise ValueError(
             f"could not find a Loxone Android {channel} APK on {app_definition.source_url}"
         )
+
+    def _resolve_from_structured_downloads(
+        self, html: str, *, channel: str
+    ) -> ResolvedRelease | None:
+        parser = _StructuredConfigParser()
+        parser.feed(html)
+        parser.close()
+
+        structured_configs = self._decode_structured_configs(parser.payloads)
+        preferred_configs = [config for config in structured_configs if not config.get("archived")]
+        fallback_configs = [config for config in structured_configs if config.get("archived")]
+
+        for config in [*preferred_configs, *fallback_configs]:
+            if str(config.get("application", "")).strip().lower() != "app":
+                continue
+            if str(config.get("type", "")).strip().lower() != channel:
+                continue
+
+            download_url = self._find_android_apk_url(config.get("allVersions"))
+            if download_url is None:
+                continue
+
+            version = str(config.get("version", "")).strip()
+            if not version:
+                continue
+
+            title = str(config.get("title", "")).strip() or "Loxone App"
+            release_name = title if version in title else f"{title} {version}".strip()
+            return ResolvedRelease(
+                version=version,
+                download_url=download_url,
+                release_name=release_name,
+                file_extension=".apk",
+            )
+
+        return None
+
+    @staticmethod
+    def _decode_structured_configs(payloads: list[str]) -> list[dict[str, Any]]:
+        configs: list[dict[str, Any]] = []
+        for payload in payloads:
+            try:
+                decoded = base64.b64decode(unescape(payload)).decode("utf-8")
+                parsed = json.loads(decoded)
+            except (ValueError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(parsed, dict):
+                continue
+
+            config = parsed.get("config")
+            if isinstance(config, dict):
+                configs.append(config)
+
+        return configs
+
+    @staticmethod
+    def _find_android_apk_url(all_versions: object) -> str | None:
+        if not isinstance(all_versions, list):
+            return None
+
+        for version_group in all_versions:
+            if not isinstance(version_group, dict):
+                continue
+
+            groups = version_group.get("groups")
+            if not isinstance(groups, list):
+                continue
+
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                if str(group.get("platform", "")).strip().lower() != "android":
+                    continue
+
+                downloads = group.get("downloads")
+                if not isinstance(downloads, list):
+                    continue
+
+                for download in downloads:
+                    if not isinstance(download, dict):
+                        continue
+                    url = str(download.get("url", "")).strip()
+                    if url.lower().endswith(".apk"):
+                        return url
+
+        return None
 
     @staticmethod
     def _heading_matches_channel(heading: str, *, channel: str) -> bool:
