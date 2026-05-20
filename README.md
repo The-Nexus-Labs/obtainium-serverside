@@ -16,6 +16,7 @@ Small Python CLI for resolving Android app updates and optionally downloading AP
 
 ## 🔌 Providers
 
+- `fdroid`
 - `github`
 - `loxone`
 
@@ -79,6 +80,10 @@ If an app is missing, it is treated as not installed.
 - `version_regex`: default `^v?(.+)$`
 - `version_source`: `auto | tag_name | name`
 - `channel`: `stable | prerelease | any | release | beta`
+
+### `fdroid`
+
+- no provider-specific options
 
 ### `loxone`
 
