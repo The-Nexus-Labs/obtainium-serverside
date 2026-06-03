@@ -9,10 +9,18 @@ from .providers import get_provider
 
 NUMERIC_VERSION_RE = re.compile(r"\d+")
 SAFE_FILE_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
+BUILD_METADATA_RE = re.compile(r"\s*\([^)]*\)\s*$")
 
 
 def _numeric_tokens(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in NUMERIC_VERSION_RE.findall(version))
+
+
+def _normalize_version(version: str) -> str:
+    """Drop a trailing build-code parenthetical (e.g. Loxone's ``17.1.1 (16704)``) so a
+    resolved/pinned version compares equal to the Android ``versionName`` it maps to
+    (``17.1.1``), instead of triggering a needless reinstall on every run."""
+    return BUILD_METADATA_RE.sub("", version).strip()
 
 
 def should_update(*, latest_version: str, installed_version: str | None) -> bool:
@@ -20,10 +28,11 @@ def should_update(*, latest_version: str, installed_version: str | None) -> bool
         return True
 
     assert installed_version is not None
-    current_version = installed_version
+    latest = _normalize_version(latest_version)
+    installed = _normalize_version(installed_version)
 
-    latest_parts = _numeric_tokens(latest_version)
-    installed_parts = _numeric_tokens(current_version)
+    latest_parts = _numeric_tokens(latest)
+    installed_parts = _numeric_tokens(installed)
 
     if latest_parts and installed_parts and latest_parts != installed_parts:
         max_length = max(len(latest_parts), len(installed_parts))
@@ -31,21 +40,27 @@ def should_update(*, latest_version: str, installed_version: str | None) -> bool
         padded_installed = installed_parts + (0,) * (max_length - len(installed_parts))
         return padded_latest > padded_installed
 
-    return latest_version.strip() != current_version.strip()
+    return latest != installed
 
 
 def should_apply_pinned(*, target_version: str, installed_version: str | None) -> bool:
     """Pinned apps install whenever the installed version differs from the pin, which
-    covers a missing install, an upgrade, and a downgrade to an older pinned version."""
+    covers a missing install, an upgrade, and a downgrade to an older pinned version.
+
+    The build-code parenthetical that Loxone appends (``17.1.1 (16704)``) is stripped
+    first, since the device reports only the bare ``versionName`` (``17.1.1``) and would
+    otherwise always look different from the pin, reinstalling the same APK every run."""
     if installed_version in (None, ""):
         return True
 
     assert installed_version is not None
-    installed_parts = _numeric_tokens(installed_version)
-    target_parts = _numeric_tokens(target_version)
+    target = _normalize_version(target_version)
+    installed = _normalize_version(installed_version)
+    target_parts = _numeric_tokens(target)
+    installed_parts = _numeric_tokens(installed)
     if installed_parts and target_parts:
         return installed_parts != target_parts
-    return installed_version.strip() != target_version.strip()
+    return installed != target
 
 
 def build_download_path(download_dir: Path, *, app_id: str, version: str, extension: str) -> Path:
