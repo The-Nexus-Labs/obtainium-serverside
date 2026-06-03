@@ -63,6 +63,20 @@ def test_should_apply_pinned_covers_hold_upgrade_and_downgrade() -> None:
     assert should_apply_pinned(target_version="2.4.3", installed_version="2.5.0")
 
 
+def test_should_apply_pinned_ignores_loxone_build_suffix() -> None:
+    # Loxone's resolved/pinned version carries a build code the device versionName lacks;
+    # the same version must not look different and reinstall on every run.
+    assert not should_apply_pinned(target_version="17.1.1 (16704)", installed_version="17.1.1")
+    assert not should_apply_pinned(target_version="17.1.1", installed_version="17.1.1 (16704)")
+    # a genuine difference still applies (downgrade), suffix notwithstanding
+    assert should_apply_pinned(target_version="16.2.2", installed_version="17.1.1 (16704)")
+
+
+def test_should_update_ignores_loxone_build_suffix() -> None:
+    assert not should_update(latest_version="17.1.1 (16704)", installed_version="17.1.1")
+    assert should_update(latest_version="17.1.2 (16800)", installed_version="17.1.1")
+
+
 def test_plan_updates_downloads_only_required_apps(monkeypatch, tmp_path: Path) -> None:
     release = ResolvedRelease(
         version="16.2.2",
@@ -183,6 +197,36 @@ def test_plan_updates_pinned_older_than_installed_downgrades(monkeypatch) -> Non
     assert result.updates[0].pinned is True
     assert result.updates[0].installed_version == "2.6.0"
     assert result.updates[0].latest_version == "2.4.3"
+
+
+def test_plan_updates_pinned_loxone_with_build_suffix_is_skipped(monkeypatch) -> None:
+    # Pin and resolved release carry Loxone's build code; the device reports only the
+    # bare versionName, so the same install must not be reapplied.
+    release = ResolvedRelease(
+        version="17.1.1 (16704)",
+        download_url="https://updatefiles.loxone.com/Android/Release/171116704.apk",
+    )
+    monkeypatch.setattr(
+        "obtainium_serverside.planner.get_provider",
+        lambda _provider_name: StubProvider(release),
+    )
+
+    result = plan_updates(
+        [
+            AppDefinition(
+                app_id="com.loxone.kerberos",
+                provider="loxone",
+                source_url="https://www.loxone.com/enus/support/downloads/",
+                provider_config={"channel": "release"},
+                version="17.1.1 (16704)",
+            )
+        ],
+        [InstalledApp(app_id="com.loxone.kerberos", version="17.1.1")],
+        http_client=StubHttpClient(),
+    )
+
+    assert result.errors == []
+    assert result.updates == []
 
 
 def test_plan_updates_without_version_keeps_latest_behavior(monkeypatch) -> None:
