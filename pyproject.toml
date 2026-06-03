@@ -25,6 +25,9 @@ target-version = ["py312"]
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+markers = [
+    "integration: live network tests (opt-in via RUN_LIVE_TESTS=1)",
+]
 
 [tool.mypy]
 python_version = "3.12"

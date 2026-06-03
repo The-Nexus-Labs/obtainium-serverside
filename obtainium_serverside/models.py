@@ -11,6 +11,7 @@ class AppDefinition:
     source_url: str
     name: str | None = None
     provider_config: dict[str, Any] = field(default_factory=dict)
+    version: str | None = None
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "AppDefinition":
@@ -27,12 +28,14 @@ class AppDefinition:
         provider_config = payload.get("provider_config") or {}
         if not isinstance(provider_config, dict):
             raise ValueError(f"app {app_id} provider_config must be an object")
+        version = payload.get("version")
         return cls(
             app_id=app_id,
             provider=provider,
             source_url=source_url,
             name=str(name).strip() if name is not None else None,
             provider_config=dict(provider_config),
+            version=None if version in (None, "") else str(version).strip() or None,
         )
 
 
@@ -69,6 +72,7 @@ class PlannedUpdate:
     downloaded_apk_path: str | None
     name: str | None = None
     release_name: str | None = None
+    pinned: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -81,6 +85,7 @@ class PlannedUpdate:
             "download_url": self.download_url,
             "downloaded_apk_path": self.downloaded_apk_path,
             "release_name": self.release_name,
+            "pinned": self.pinned,
         }
 
 

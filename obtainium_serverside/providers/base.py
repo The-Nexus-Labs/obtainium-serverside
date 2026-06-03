@@ -12,3 +12,17 @@ class BaseProvider(ABC):
         self, app_definition: AppDefinition, http_client: HttpClient
     ) -> ResolvedRelease:
         raise NotImplementedError
+
+    def resolve_release(
+        self, app_definition: AppDefinition, http_client: HttpClient
+    ) -> ResolvedRelease:
+        """Resolve the release to install: the pinned version if one is declared,
+        otherwise the latest upstream release."""
+        if not app_definition.version:
+            return self.resolve_latest_release(app_definition, http_client)
+        return self.resolve_pinned_release(app_definition, http_client, app_definition.version)
+
+    def resolve_pinned_release(
+        self, app_definition: AppDefinition, http_client: HttpClient, version: str
+    ) -> ResolvedRelease:
+        raise ValueError(f"provider {app_definition.provider} does not support version pinning")

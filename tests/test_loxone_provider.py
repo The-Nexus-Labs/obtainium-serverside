@@ -166,6 +166,118 @@ def test_loxone_provider_supports_beta_channel_from_structured_page_data() -> No
     assert release.release_name == "LOXONE App 17.0.1 (15948) Public Beta"
 
 
+def _app_release_config(version: str, apk_url: str, *, archived: bool) -> dict[str, object]:
+    return {
+        "application": "app",
+        "type": "release",
+        "title": f"LOXONE App {version}",
+        "version": version,
+        "archived": archived,
+        "allVersions": [
+            {
+                "label": "Mobile",
+                "groups": [
+                    {
+                        "label": "Android",
+                        "platform": "android",
+                        "downloads": [
+                            {
+                                "label": "Download",
+                                "url": "https://play.google.com/store/apps/details?id=com.loxone.kerberos",
+                            },
+                            {"label": "Download", "url": apk_url},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_loxone_provider_resolves_pinned_non_latest_version() -> None:
+    html = _build_structured_html(
+        _app_release_config(
+            "17.1.1 (16704)",
+            "https://updatefiles.loxone.com/Android/Release/171116704.apk",
+            archived=False,
+        ),
+        _app_release_config(
+            "17.1.0 (16241)",
+            "https://updatefiles.loxone.com/Android/Release/171016241.apk",
+            archived=True,
+        ),
+        _app_release_config(
+            "16.2.2",
+            "https://updatefiles.loxone.com/Android/Release/162215280.apk",
+            archived=True,
+        ),
+    )
+    provider = LoxoneProvider()
+    app_definition = AppDefinition(
+        app_id="com.loxone.kerberos",
+        name="Loxone App",
+        provider="loxone",
+        source_url="https://www.loxone.com/enus/support/downloads/",
+        version="17.1.0",
+    )
+
+    release = provider.resolve_release(app_definition, StubHttpClient(html))
+
+    assert release.version == "17.1.0 (16241)"
+    assert release.download_url == "https://updatefiles.loxone.com/Android/Release/171016241.apk"
+
+
+def test_loxone_provider_pinned_matches_exact_version_string() -> None:
+    html = _build_structured_html(
+        _app_release_config(
+            "17.1.1 (16704)",
+            "https://updatefiles.loxone.com/Android/Release/171116704.apk",
+            archived=False,
+        ),
+        _app_release_config(
+            "16.2.2",
+            "https://updatefiles.loxone.com/Android/Release/162215280.apk",
+            archived=True,
+        ),
+    )
+    provider = LoxoneProvider()
+    app_definition = AppDefinition(
+        app_id="com.loxone.kerberos",
+        provider="loxone",
+        source_url="https://www.loxone.com/enus/support/downloads/",
+        version="16.2.2",
+    )
+
+    release = provider.resolve_release(app_definition, StubHttpClient(html))
+
+    assert release.version == "16.2.2"
+    assert release.download_url == "https://updatefiles.loxone.com/Android/Release/162215280.apk"
+
+
+def test_loxone_provider_errors_when_pinned_version_missing() -> None:
+    html = _build_structured_html(
+        _app_release_config(
+            "17.1.1 (16704)",
+            "https://updatefiles.loxone.com/Android/Release/171116704.apk",
+            archived=False,
+        ),
+    )
+    provider = LoxoneProvider()
+    app_definition = AppDefinition(
+        app_id="com.loxone.kerberos",
+        provider="loxone",
+        source_url="https://www.loxone.com/enus/support/downloads/",
+        version="9.9.9",
+    )
+
+    try:
+        provider.resolve_release(app_definition, StubHttpClient(html))
+    except ValueError as exc:
+        assert "9.9.9" in str(exc)
+    else:
+        raise AssertionError("expected ValueError when the pinned version is absent")
+
+
 def test_loxone_provider_falls_back_to_legacy_heading_parser() -> None:
     html = """
     <html>

@@ -10,7 +10,7 @@ Small Python CLI for resolving Android app updates and optionally downloading AP
 ## ✨ What it does
 
 - compares desired apps with installed versions
-- resolves the latest APK via a provider
+- resolves the latest APK via a provider (or an exact pinned `version`, see below)
 - optionally downloads required APKs
 - prints JSON with `updates` and `errors`
 
@@ -52,6 +52,27 @@ poetry run python -m obtainium_serverside --config config.json --installed insta
         "asset_regex": "^simplex-aarch64\\.apk$",
         "version_regex": "^v?(.+)$"
       }
+    }
+  ]
+}
+```
+
+### 📌 Version pinning
+
+Each app may declare an optional `version`. When set, the resolver targets that
+**exact** upstream version (for `github`, `fdroid`, and `loxone`) instead of the latest,
+and plans an install whenever the installed version differs from the pin — including
+holding at, or **downgrading** to, an older version. Pinned updates are flagged with
+`"pinned": true` in the output. Omit `version` to keep the default latest behavior.
+
+```json
+{
+  "apps": [
+    {
+      "app_id": "ws.xsoh.etar",
+      "provider": "fdroid",
+      "source_url": "https://f-droid.org/packages/ws.xsoh.etar/",
+      "version": "1.0.55"
     }
   ]
 }
