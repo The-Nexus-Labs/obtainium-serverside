@@ -22,6 +22,10 @@ CHANNEL_ALIASES = {
 }
 
 
+PINNED_PER_PAGE = 100
+PINNED_MAX_PAGES = 3
+
+
 class GitHubReleasesProvider(BaseProvider):
     def resolve_latest_release(
         self, app_definition: AppDefinition, http_client: HttpClient
@@ -37,31 +41,16 @@ class GitHubReleasesProvider(BaseProvider):
             key="version_regex",
             default=DEFAULT_VERSION_REGEX,
         )
-        version_source = (
-            str(app_definition.provider_config.get("version_source", "auto")).strip().lower()
-        )
-        if version_source not in VALID_VERSION_SOURCES:
-            raise ValueError(
-                f"app {app_definition.app_id} has unsupported github version_source: {version_source}"
-            )
+        version_source = self._normalize_version_source(app_definition)
 
         channel = self._normalize_channel(app_definition)
         api_url = f"https://api.github.com/repos/{repository}/releases?per_page=20"
-        releases = json.loads(http_client.get_text(api_url))
-        if not isinstance(releases, list):
-            raise ValueError(f"unexpected GitHub API response for {repository}")
+        releases = self._fetch_releases(http_client, api_url, repository)
 
         for release in releases:
-            if not isinstance(release, dict):
+            if not self._is_eligible(release, channel=channel):
                 continue
-            if release.get("draft"):
-                continue
-            if not self._release_matches_channel(release, channel=channel):
-                continue
-
-            assets = release.get("assets")
-            if not isinstance(assets, list):
-                continue
+            assert isinstance(release, dict)
 
             version = self._extract_version(
                 app_definition,
@@ -69,27 +58,122 @@ class GitHubReleasesProvider(BaseProvider):
                 version_pattern=version_pattern,
                 version_source=version_source,
             )
-
-            for asset in assets:
-                if not isinstance(asset, dict):
-                    continue
-                asset_name = str(asset.get("name", "")).strip()
-                download_url = str(asset.get("browser_download_url", "")).strip()
-                if not asset_name or not download_url:
-                    continue
-                if not asset_pattern.search(asset_name):
-                    continue
-                return ResolvedRelease(
-                    version=version,
-                    download_url=download_url,
-                    release_name=str(release.get("name") or release.get("tag_name") or "").strip()
-                    or None,
-                    file_extension=PurePosixPath(asset_name).suffix or ".apk",
-                )
+            resolved = self._build_release(release, version=version, asset_pattern=asset_pattern)
+            if resolved is not None:
+                return resolved
 
         raise ValueError(
             f"could not find a matching GitHub release asset for {app_definition.app_id} in {repository}"
         )
+
+    def resolve_pinned_release(
+        self, app_definition: AppDefinition, http_client: HttpClient, version: str
+    ) -> ResolvedRelease:
+        repository = self._extract_repository(app_definition.source_url)
+        asset_pattern = self._compile_pattern(
+            app_definition,
+            key="asset_regex",
+            default=DEFAULT_ASSET_REGEX,
+        )
+        version_pattern = self._compile_pattern(
+            app_definition,
+            key="version_regex",
+            default=DEFAULT_VERSION_REGEX,
+        )
+        version_source = self._normalize_version_source(app_definition)
+        channel = self._normalize_channel(app_definition)
+        target = version.strip()
+
+        for page in range(1, PINNED_MAX_PAGES + 1):
+            api_url = (
+                f"https://api.github.com/repos/{repository}/releases"
+                f"?per_page={PINNED_PER_PAGE}&page={page}"
+            )
+            releases = self._fetch_releases(http_client, api_url, repository)
+            if not releases:
+                break
+
+            for release in releases:
+                if not self._is_eligible(release, channel=channel):
+                    continue
+                assert isinstance(release, dict)
+
+                extracted = self._extract_version(
+                    app_definition,
+                    release,
+                    version_pattern=version_pattern,
+                    version_source=version_source,
+                )
+                if extracted.strip() != target:
+                    continue
+
+                resolved = self._build_release(
+                    release, version=extracted, asset_pattern=asset_pattern
+                )
+                if resolved is not None:
+                    return resolved
+                raise ValueError(
+                    f"app {app_definition.app_id} pinned version {target} has no matching "
+                    f"GitHub release asset in {repository}"
+                )
+
+        raise ValueError(
+            f"app {app_definition.app_id} pinned version {target} was not found in the "
+            f"most recent GitHub releases for {repository}"
+        )
+
+    @staticmethod
+    def _fetch_releases(http_client: HttpClient, api_url: str, repository: str) -> list[object]:
+        releases = json.loads(http_client.get_text(api_url))
+        if not isinstance(releases, list):
+            raise ValueError(f"unexpected GitHub API response for {repository}")
+        return releases
+
+    @staticmethod
+    def _is_eligible(release: object, *, channel: str) -> bool:
+        if not isinstance(release, dict):
+            return False
+        if release.get("draft"):
+            return False
+        if not GitHubReleasesProvider._release_matches_channel(release, channel=channel):
+            return False
+        return isinstance(release.get("assets"), list)
+
+    @staticmethod
+    def _build_release(
+        release: dict[str, object], *, version: str, asset_pattern: re.Pattern[str]
+    ) -> ResolvedRelease | None:
+        assets = release.get("assets")
+        if not isinstance(assets, list):
+            return None
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            asset_name = str(asset.get("name", "")).strip()
+            download_url = str(asset.get("browser_download_url", "")).strip()
+            if not asset_name or not download_url:
+                continue
+            if not asset_pattern.search(asset_name):
+                continue
+            return ResolvedRelease(
+                version=version,
+                download_url=download_url,
+                release_name=str(release.get("name") or release.get("tag_name") or "").strip()
+                or None,
+                file_extension=PurePosixPath(asset_name).suffix or ".apk",
+            )
+        return None
+
+    @staticmethod
+    def _normalize_version_source(app_definition: AppDefinition) -> str:
+        version_source = (
+            str(app_definition.provider_config.get("version_source", "auto")).strip().lower()
+        )
+        if version_source not in VALID_VERSION_SOURCES:
+            raise ValueError(
+                f"app {app_definition.app_id} has unsupported github version_source: {version_source}"
+            )
+        return version_source
 
     @staticmethod
     def _extract_repository(source_url: str) -> str:

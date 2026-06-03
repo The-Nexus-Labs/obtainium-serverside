@@ -42,7 +42,11 @@ class _FDroidVersionsParser(HTMLParser):
         ).strip()
         href = self._current_href.strip()
         text_snapshot = " ".join(part.strip() for part in self._text_parts if part.strip())
-        version_match = VERSION_LINE_RE.search(text_snapshot)
+        # The text snapshot is cumulative, so take the *last* version line seen — that is
+        # the one immediately preceding this download link — rather than the first.
+        version_match = None
+        for version_match in VERSION_LINE_RE.finditer(text_snapshot):
+            pass
         if (
             version_match is not None
             and link_text.lower().startswith("download apk")
@@ -64,23 +68,44 @@ class FDroidProvider(BaseProvider):
     def resolve_latest_release(
         self, app_definition: AppDefinition, http_client: HttpClient
     ) -> ResolvedRelease:
+        entries = self._collect_entries(app_definition, http_client)
+        if not entries:
+            raise ValueError(
+                f"could not find an F-Droid APK release on {app_definition.source_url}"
+            )
+        return self._build_release(app_definition, entries[0])
+
+    def resolve_pinned_release(
+        self, app_definition: AppDefinition, http_client: HttpClient, version: str
+    ) -> ResolvedRelease:
+        entries = self._collect_entries(app_definition, http_client)
+        target = version.strip()
+        for entry in entries:
+            if entry["version"].strip() == target:
+                return self._build_release(app_definition, entry)
+
+        raise ValueError(
+            f"app {app_definition.app_id} pinned version {target} was not found among the "
+            f"F-Droid versions on {app_definition.source_url}"
+        )
+
+    @staticmethod
+    def _collect_entries(
+        app_definition: AppDefinition, http_client: HttpClient
+    ) -> list[dict[str, str]]:
         html = http_client.get_text(app_definition.source_url)
         parser = _FDroidVersionsParser()
         parser.feed(html)
         parser.close()
+        return parser.version_entries
 
-        if not parser.version_entries:
-            raise ValueError(
-                f"could not find an F-Droid APK release on {app_definition.source_url}"
-            )
-
-        latest_entry = parser.version_entries[0]
-        version = latest_entry["version"]
-        version_code = latest_entry["version_code"]
-
+    @staticmethod
+    def _build_release(app_definition: AppDefinition, entry: dict[str, str]) -> ResolvedRelease:
+        version = entry["version"]
+        version_code = entry["version_code"]
         return ResolvedRelease(
             version=version,
-            download_url=urljoin(app_definition.source_url, latest_entry["download_url"]),
+            download_url=urljoin(app_definition.source_url, entry["download_url"]),
             release_name=f"Version {version} ({version_code})",
             file_extension=".apk",
         )

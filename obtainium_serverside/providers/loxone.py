@@ -101,42 +101,38 @@ class LoxoneProvider(BaseProvider):
         if structured_release is not None:
             return structured_release
 
-        parser = _SectionParser()
-        parser.feed(html)
-        parser.close()
-
-        for section in parser.sections:
-            heading = str(section.get("heading", "")).strip()
-            if not self._heading_matches_channel(heading, channel=channel):
-                continue
-
-            version_match = VERSION_RE.search(heading)
-            if version_match is None:
-                continue
-
-            links = section.get("links")
-            if not isinstance(links, list):
-                continue
-
-            for link in links:
-                if not isinstance(link, dict):
-                    continue
-                text = str(link.get("text", "")).strip().lower()
-                href = str(link.get("href", "")).strip()
-                if text == "download" and href.lower().endswith(".apk"):
-                    return ResolvedRelease(
-                        version=version_match.group(1).strip(),
-                        download_url=href,
-                        release_name=heading,
-                        file_extension=".apk",
-                    )
+        release = self._resolve_from_sections(html, channel=channel)
+        if release is not None:
+            return release
 
         raise ValueError(
             f"could not find a Loxone Android {channel} APK on {app_definition.source_url}"
         )
 
+    def resolve_pinned_release(
+        self, app_definition: AppDefinition, http_client: HttpClient, version: str
+    ) -> ResolvedRelease:
+        channel = str(app_definition.provider_config.get("channel", "release")).strip().lower()
+        html = http_client.get_text(app_definition.source_url)
+        target = version.strip()
+
+        structured_release = self._resolve_from_structured_downloads(
+            html, channel=channel, pinned_version=target
+        )
+        if structured_release is not None:
+            return structured_release
+
+        release = self._resolve_from_sections(html, channel=channel, pinned_version=target)
+        if release is not None:
+            return release
+
+        raise ValueError(
+            f"app {app_definition.app_id} pinned Loxone {channel} version {target} is not "
+            f"offered on {app_definition.source_url}"
+        )
+
     def _resolve_from_structured_downloads(
-        self, html: str, *, channel: str
+        self, html: str, *, channel: str, pinned_version: str | None = None
     ) -> ResolvedRelease | None:
         parser = _StructuredConfigParser()
         parser.feed(html)
@@ -152,12 +148,14 @@ class LoxoneProvider(BaseProvider):
             if str(config.get("type", "")).strip().lower() != channel:
                 continue
 
-            download_url = self._find_android_apk_url(config.get("allVersions"))
-            if download_url is None:
-                continue
-
             version = str(config.get("version", "")).strip()
             if not version:
+                continue
+            if pinned_version is not None and not self._version_matches(version, pinned_version):
+                continue
+
+            download_url = self._find_android_apk_url(config.get("allVersions"))
+            if download_url is None:
                 continue
 
             title = str(config.get("title", "")).strip() or "Loxone App"
@@ -170,6 +168,56 @@ class LoxoneProvider(BaseProvider):
             )
 
         return None
+
+    def _resolve_from_sections(
+        self, html: str, *, channel: str, pinned_version: str | None = None
+    ) -> ResolvedRelease | None:
+        parser = _SectionParser()
+        parser.feed(html)
+        parser.close()
+
+        for section in parser.sections:
+            heading = str(section.get("heading", "")).strip()
+            if not self._heading_matches_channel(heading, channel=channel):
+                continue
+
+            version_match = VERSION_RE.search(heading)
+            if version_match is None:
+                continue
+
+            version = version_match.group(1).strip()
+            if pinned_version is not None and not self._version_matches(version, pinned_version):
+                continue
+
+            links = section.get("links")
+            if not isinstance(links, list):
+                continue
+
+            for link in links:
+                if not isinstance(link, dict):
+                    continue
+                text = str(link.get("text", "")).strip().lower()
+                href = str(link.get("href", "")).strip()
+                if text == "download" and href.lower().endswith(".apk"):
+                    return ResolvedRelease(
+                        version=version,
+                        download_url=href,
+                        release_name=heading,
+                        file_extension=".apk",
+                    )
+
+        return None
+
+    @staticmethod
+    def _version_matches(offered_version: str, pinned_version: str) -> bool:
+        offered = offered_version.strip()
+        pinned = pinned_version.strip()
+        if offered == pinned:
+            return True
+        # Loxone often suffixes a build code, e.g. "17.1.0 (16241)"; match the leading
+        # version against the pin so a pin of "17.1.0" resolves that release.
+        offered_lead = offered.split("(", 1)[0].strip()
+        return bool(offered_lead) and offered_lead == pinned
 
     @staticmethod
     def _decode_structured_configs(payloads: list[str]) -> list[dict[str, Any]]:
