@@ -95,7 +95,7 @@ def test_plan_updates_downloads_only_required_apps(monkeypatch, tmp_path: Path) 
         [
             AppDefinition(
                 app_id="com.loxone.kerberos",
-                provider="loxone",
+                provider="http",
                 source_url="https://www.loxone.com/enus/support/downloads/",
                 name="Loxone App",
             )
@@ -132,7 +132,7 @@ def test_plan_updates_skips_up_to_date_apps(monkeypatch) -> None:
         [
             AppDefinition(
                 app_id="com.loxone.kerberos",
-                provider="loxone",
+                provider="http",
                 source_url="https://www.loxone.com/enus/support/downloads/",
             )
         ],
@@ -215,7 +215,7 @@ def test_plan_updates_pinned_loxone_with_build_suffix_is_skipped(monkeypatch) ->
         [
             AppDefinition(
                 app_id="com.loxone.kerberos",
-                provider="loxone",
+                provider="http",
                 source_url="https://www.loxone.com/enus/support/downloads/",
                 provider_config={"channel": "release"},
                 version="17.1.1 (16704)",
@@ -244,7 +244,7 @@ def test_plan_updates_without_version_keeps_latest_behavior(monkeypatch) -> None
         [
             AppDefinition(
                 app_id="com.loxone.kerberos",
-                provider="loxone",
+                provider="http",
                 source_url="https://www.loxone.com/enus/support/downloads/",
             )
         ],
