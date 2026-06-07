@@ -1,107 +1,301 @@
 from __future__ import annotations
 
+import base64
+import json
 import re
-from dataclasses import replace
+from html import unescape
+from html.parser import HTMLParser
+from typing import Any
 
 from obtainium_serverside.http import HttpClient
 from obtainium_serverside.models import AppDefinition, ResolvedRelease
 
 from .base import BaseProvider
-from .http import HTTPProvider
+
+HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+VERSION_RE = re.compile(r"Loxone App\s+(.+?)\s+for Android(?:\s+-.*)?$", re.IGNORECASE)
+STRUCTURED_DOWNLOAD_CLASS = "loxone-software-download-root"
+
+
+class _StructuredConfigParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.payloads: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "div":
+            return
+
+        attr_map = dict(attrs)
+        class_name = attr_map.get("class") or ""
+        if STRUCTURED_DOWNLOAD_CLASS not in class_name.split():
+            return
+
+        payload = attr_map.get("data-config")
+        if payload:
+            self.payloads.append(payload)
+
+
+class _SectionParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sections: list[dict[str, object]] = []
+        self._current_heading: str | None = None
+        self._current_links: list[dict[str, str]] = []
+        self._heading_parts: list[str] = []
+        self._link_parts: list[str] = []
+        self._link_href: str | None = None
+        self._inside_heading = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in HEADING_TAGS:
+            self._flush_section()
+            self._heading_parts = []
+            self._inside_heading = True
+            return
+        if tag == "a":
+            self._link_parts = []
+            self._link_href = dict(attrs).get("href")
+
+    def handle_data(self, data: str) -> None:
+        if self._inside_heading:
+            self._heading_parts.append(data)
+        if self._link_href is not None:
+            self._link_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in HEADING_TAGS:
+            heading = " ".join(part.strip() for part in self._heading_parts if part.strip()).strip()
+            self._current_heading = heading or self._current_heading
+            self._heading_parts = []
+            self._inside_heading = False
+            return
+        if tag == "a" and self._link_href is not None:
+            text = " ".join(part.strip() for part in self._link_parts if part.strip()).strip()
+            if text and self._link_href:
+                self._current_links.append({"text": text, "href": self._link_href})
+            self._link_parts = []
+            self._link_href = None
+
+    def close(self) -> None:
+        super().close()
+        self._flush_section()
+
+    def _flush_section(self) -> None:
+        if self._current_heading:
+            self.sections.append(
+                {"heading": self._current_heading, "links": list(self._current_links)}
+            )
+        self._current_heading = None
+        self._current_links = []
+
+
+def version_matches(offered_version: str, pinned_version: str) -> bool:
+    offered = offered_version.strip()
+    pinned = pinned_version.strip()
+    if offered == pinned:
+        return True
+    offered_lead = offered.split("(", 1)[0].strip()
+    return bool(offered_lead) and offered_lead == pinned
+
+
+def decode_structured_configs(payloads: list[str]) -> list[dict[str, Any]]:
+    configs: list[dict[str, Any]] = []
+    for payload in payloads:
+        try:
+            decoded = base64.b64decode(unescape(payload)).decode("utf-8")
+            parsed = json.loads(decoded)
+        except (ValueError, json.JSONDecodeError):
+            continue
+
+        if not isinstance(parsed, dict):
+            continue
+
+        config = parsed.get("config")
+        if isinstance(config, dict):
+            configs.append(config)
+
+    return configs
+
+
+def _find_download_url(all_versions: object, platform: str, file_extension: str) -> str | None:
+    if not isinstance(all_versions, list):
+        return None
+
+    for version_group in all_versions:
+        if not isinstance(version_group, dict):
+            continue
+
+        groups = version_group.get("groups")
+        if not isinstance(groups, list):
+            continue
+
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            if str(group.get("platform", "")).strip().lower() != platform.lower():
+                continue
+
+            downloads = group.get("downloads")
+            if not isinstance(downloads, list):
+                continue
+
+            for download in downloads:
+                if not isinstance(download, dict):
+                    continue
+                url = str(download.get("url", "")).strip()
+                if url.lower().endswith(file_extension.lower()):
+                    return url
+
+    return None
+
+
+def _heading_matches_channel(heading: str, *, channel: str) -> bool:
+    normalized = heading.lower()
+    if "loxone app" not in normalized or "for android" not in normalized:
+        return False
+    if "playstore" in normalized:
+        return False
+    if channel == "beta":
+        return "public beta" in normalized
+    return "public beta" not in normalized
 
 
 class LoxoneProvider(BaseProvider):
-    def __init__(self) -> None:
-        self._http_provider = HTTPProvider()
-
     def resolve_latest_release(
         self, app_definition: AppDefinition, http_client: HttpClient
     ) -> ResolvedRelease:
-        return self._resolve(app_definition, http_client)
+        channel = str(app_definition.provider_config.get("channel", "release")).strip().lower()
+        platform = str(app_definition.provider_config.get("platform", "android")).strip().lower()
+        raw_ext = str(app_definition.provider_config.get("file_extension", ".apk")).strip().lower()
+        file_extension = f".{raw_ext}" if not raw_ext.startswith(".") else raw_ext
+        html = http_client.get_text(app_definition.source_url)
+
+        structured_release = self._resolve_from_structured_downloads(
+            html, channel=channel, platform=platform, file_extension=file_extension
+        )
+        if structured_release is not None:
+            return structured_release
+
+        if platform == "android":
+            release = self._resolve_from_sections(html, channel=channel)
+            if release is not None:
+                return release
+
+        raise ValueError(
+            f"could not find a Loxone {platform} {channel} {file_extension} "
+            f"package on {app_definition.source_url}"
+        )
 
     def resolve_pinned_release(
         self, app_definition: AppDefinition, http_client: HttpClient, version: str
     ) -> ResolvedRelease:
-        return self._resolve(replace(app_definition, version=version), http_client)
-
-    def _resolve(self, app_definition: AppDefinition, http_client: HttpClient) -> ResolvedRelease:
-        try:
-            return self._http_provider.resolve_release(
-                self._with_structured_config(app_definition), http_client
-            )
-        except ValueError:
-            platform = (
-                str(app_definition.provider_config.get("platform", "android")).strip().lower()
-            )
-            if platform != "android":
-                raise
-            return self._http_provider.resolve_release(
-                self._with_legacy_section_config(app_definition), http_client
-            )
-
-    @staticmethod
-    def _with_structured_config(app_definition: AppDefinition) -> AppDefinition:
         channel = str(app_definition.provider_config.get("channel", "release")).strip().lower()
         platform = str(app_definition.provider_config.get("platform", "android")).strip().lower()
-        file_extension = _normalized_extension(
-            str(app_definition.provider_config.get("file_extension", ".apk"))
-        )
-        platform_segment = "Android" if platform == "android" else platform.split("_", 1)[0]
-        channel_segment = "Beta" if channel == "beta" else "Release"
-        download_url_regex = (
-            r"https://updatefiles\.loxone\.com/"
-            rf"{re.escape(platform_segment)}/{channel_segment}/.*{re.escape(file_extension)}$"
-        )
+        raw_ext = str(app_definition.provider_config.get("file_extension", ".apk")).strip().lower()
+        file_extension = f".{raw_ext}" if not raw_ext.startswith(".") else raw_ext
+        target = version.strip()
+        html = http_client.get_text(app_definition.source_url)
 
-        return replace(
-            app_definition,
-            provider_config={
-                **app_definition.provider_config,
-                "extractor": "html_json_attribute",
-                "html_class": "loxone-software-download-root",
-                "html_attr": "data-config",
-                "html_attr_encoding": "base64",
-                "entries_path": "config",
-                "filters": {"application": "app", "type": channel},
-                "prefer_false_path": "archived",
-                "version_path": "version",
-                "version_match_strategy": "strip_trailing_parenthetical",
-                "download_url_path": "allVersions.groups.downloads.url",
-                "download_url_regex": download_url_regex,
-                "release_name_path": "title",
-                "append_version_to_release_name": True,
-                "file_extension": file_extension,
-            },
+        structured_release = self._resolve_from_structured_downloads(
+            html,
+            channel=channel,
+            platform=platform,
+            file_extension=file_extension,
+            pinned_version=target,
+        )
+        if structured_release is not None:
+            return structured_release
+
+        if platform == "android":
+            release = self._resolve_from_sections(html, channel=channel, pinned_version=target)
+            if release is not None:
+                return release
+
+        raise ValueError(
+            f"app {app_definition.app_id} pinned Loxone {platform} {channel} "
+            f"version {target} is not offered on {app_definition.source_url}"
         )
 
-    @staticmethod
-    def _with_legacy_section_config(app_definition: AppDefinition) -> AppDefinition:
-        channel = str(app_definition.provider_config.get("channel", "release")).strip().lower()
-        channel_segment = "Beta" if channel == "beta" else "Release"
-        heading_pattern = r"Loxone App\s+.+?\s+for Android"
-        if channel == "beta":
-            heading_pattern = r"Loxone App\s+.+?\s+Public Beta.*for Android"
+    def _resolve_from_structured_downloads(
+        self,
+        html: str,
+        *,
+        channel: str,
+        platform: str = "android",
+        file_extension: str = ".apk",
+        pinned_version: str | None = None,
+    ) -> ResolvedRelease | None:
+        parser = _StructuredConfigParser()
+        parser.feed(html)
+        parser.close()
 
-        return replace(
-            app_definition,
-            provider_config={
-                **app_definition.provider_config,
-                "extractor": "html_sections",
-                "filters_regex": {"heading": heading_pattern},
-                "exclude_regex": {"heading": "playstore"},
-                "version_path": "heading",
-                "version_regex": r"Loxone App\s+(.+?)\s+for Android(?:\s+-.*)?$",
-                "version_match_strategy": "strip_trailing_parenthetical",
-                "download_url_path": "links.href",
-                "download_url_regex": (
-                    r"https://updatefiles\.loxone\.com/Android/" rf"{channel_segment}/.*\.apk$"
-                ),
-                "release_name_path": "heading",
-                "file_extension": ".apk",
-            },
-        )
+        structured_configs = decode_structured_configs(parser.payloads)
+        preferred_configs = [config for config in structured_configs if not config.get("archived")]
+        fallback_configs = [config for config in structured_configs if config.get("archived")]
 
+        for config in [*preferred_configs, *fallback_configs]:
+            if str(config.get("application", "")).strip().lower() != "app":
+                continue
+            if str(config.get("type", "")).strip().lower() != channel:
+                continue
 
-def _normalized_extension(raw_extension: str) -> str:
-    extension = raw_extension.strip().lower()
-    return extension if extension.startswith(".") else f".{extension}"
+            version = str(config.get("version", "")).strip()
+            if not version:
+                continue
+            if pinned_version is not None and not version_matches(version, pinned_version):
+                continue
+
+            download_url = _find_download_url(config.get("allVersions"), platform, file_extension)
+            if download_url is None:
+                continue
+
+            title = str(config.get("title", "")).strip() or "Loxone App"
+            release_name = title if version in title else f"{title} {version}".strip()
+            return ResolvedRelease(
+                version=version,
+                download_url=download_url,
+                release_name=release_name,
+                file_extension=file_extension,
+            )
+
+        return None
+
+    def _resolve_from_sections(
+        self, html: str, *, channel: str, pinned_version: str | None = None
+    ) -> ResolvedRelease | None:
+        parser = _SectionParser()
+        parser.feed(html)
+        parser.close()
+
+        for section in parser.sections:
+            heading = str(section.get("heading", "")).strip()
+            if not _heading_matches_channel(heading, channel=channel):
+                continue
+
+            version_match = VERSION_RE.search(heading)
+            if version_match is None:
+                continue
+
+            version = version_match.group(1).strip()
+            if pinned_version is not None and not version_matches(version, pinned_version):
+                continue
+
+            links = section.get("links")
+            if not isinstance(links, list):
+                continue
+
+            for link in links:
+                if not isinstance(link, dict):
+                    continue
+                text = str(link.get("text", "")).strip().lower()
+                href = str(link.get("href", "")).strip()
+                if text == "download" and href.lower().endswith(".apk"):
+                    return ResolvedRelease(
+                        version=version,
+                        download_url=href,
+                        release_name=heading,
+                        file_extension=".apk",
+                    )
+
+        return None
