@@ -302,3 +302,130 @@ def test_loxone_provider_falls_back_to_legacy_heading_parser() -> None:
 
     assert release.version == "16.2.2"
     assert release.download_url == "https://updatefiles.loxone.com/Android/Release/162215280.apk"
+
+
+def _linux_config(version: str, appimage_url: str, deb_url: str) -> dict[str, object]:
+    return {
+        "application": "app",
+        "type": "release",
+        "title": f"LOXONE App {version}",
+        "version": version,
+        "archived": False,
+        "allVersions": [
+            {
+                "label": "Desktop",
+                "groups": [
+                    {
+                        "label": "Linux x64",
+                        "platform": "linux_x64",
+                        "downloads": [
+                            {"label": "Download", "url": appimage_url},
+                            {"label": "Download", "url": deb_url},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_loxone_provider_resolves_linux_appimage() -> None:
+    html = _build_structured_html(
+        _linux_config(
+            "17.1.1 (16704)",
+            "https://updatefiles.loxone.com/linux/Release/171116704-x86_64.AppImage",
+            "https://updatefiles.loxone.com/linux/Release/171116704-amd64.deb",
+        ),
+    )
+    provider = LoxoneProvider()
+    app = AppDefinition(
+        app_id="com.loxone.kerberos",
+        provider="loxone",
+        source_url="https://www.loxone.com/enus/support/downloads/",
+        provider_config={"platform": "linux_x64", "file_extension": ".AppImage"},
+    )
+
+    release = provider.resolve_latest_release(app, StubHttpClient(html))
+
+    assert release.version == "17.1.1 (16704)"
+    assert release.download_url == (
+        "https://updatefiles.loxone.com/linux/Release/171116704-x86_64.AppImage"
+    )
+    assert release.file_extension == ".appimage"
+
+
+def test_loxone_provider_resolves_linux_deb() -> None:
+    html = _build_structured_html(
+        _linux_config(
+            "17.1.1 (16704)",
+            "https://updatefiles.loxone.com/linux/Release/171116704-x86_64.AppImage",
+            "https://updatefiles.loxone.com/linux/Release/171116704-amd64.deb",
+        ),
+    )
+    provider = LoxoneProvider()
+    app = AppDefinition(
+        app_id="com.loxone.kerberos",
+        provider="loxone",
+        source_url="https://www.loxone.com/enus/support/downloads/",
+        provider_config={"platform": "linux_x64", "file_extension": ".deb"},
+    )
+
+    release = provider.resolve_latest_release(app, StubHttpClient(html))
+
+    assert release.version == "17.1.1 (16704)"
+    assert release.download_url == (
+        "https://updatefiles.loxone.com/linux/Release/171116704-amd64.deb"
+    )
+    assert release.file_extension == ".deb"
+
+
+def test_loxone_provider_pins_linux_version() -> None:
+    html = _build_structured_html(
+        _linux_config(
+            "17.1.1 (16704)",
+            "https://updatefiles.loxone.com/linux/Release/171116704-x86_64.AppImage",
+            "https://updatefiles.loxone.com/linux/Release/171116704-amd64.deb",
+        ),
+        {
+            "application": "app",
+            "type": "release",
+            "title": "LOXONE App 17.1.0 (16241)",
+            "version": "17.1.0 (16241)",
+            "archived": True,
+            "allVersions": [
+                {
+                    "label": "Desktop",
+                    "groups": [
+                        {
+                            "label": "Linux x64",
+                            "platform": "linux_x64",
+                            "downloads": [
+                                {
+                                    "label": "Download",
+                                    "url": (
+                                        "https://updatefiles.loxone.com/linux/"
+                                        "Release/171016241-x86_64.AppImage"
+                                    ),
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    provider = LoxoneProvider()
+    app = AppDefinition(
+        app_id="com.loxone.kerberos",
+        provider="loxone",
+        source_url="https://www.loxone.com/enus/support/downloads/",
+        provider_config={"platform": "linux_x64", "file_extension": ".AppImage"},
+        version="17.1.0",
+    )
+
+    release = provider.resolve_release(app, StubHttpClient(html))
+
+    assert release.version == "17.1.0 (16241)"
+    assert release.download_url == (
+        "https://updatefiles.loxone.com/linux/Release/171016241-x86_64.AppImage"
+    )
