@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 
+import pytest
+
 from obtainium_serverside.models import AppDefinition
 from obtainium_serverside.providers import get_provider
 from obtainium_serverside.providers.http import HTTPProvider
@@ -18,6 +20,19 @@ class StubHttpClient:
         if isinstance(self.payload, str):
             return self.payload
         return json.dumps(self.payload)
+
+
+class UrlPayloadHttpClient:
+    def __init__(self, payloads: dict[str, str | dict[str, object]]) -> None:
+        self.payloads = payloads
+        self.requested_urls: list[str] = []
+
+    def get_text(self, url: str) -> str:
+        self.requested_urls.append(url)
+        payload = self.payloads[url]
+        if isinstance(payload, str):
+            return payload
+        return json.dumps(payload)
 
 
 def _build_loxone_structured_html(*configs: dict[str, object]) -> str:
@@ -311,6 +326,179 @@ def test_http_provider_resolves_loxone_linux_deb_from_structured_page_data() -> 
         "https://updatefiles.loxone.com/linux/Release/171116704-amd64.deb"
     )
     assert release.file_extension == ".deb"
+
+
+def test_http_provider_resolves_version_only_from_configured_json_path() -> None:
+    provider = HTTPProvider()
+    app_definition = AppDefinition(
+        app_id="org.tlauncher.tlauncher",
+        provider="http",
+        source_url="https://tlauncher.org/",
+        provider_config={
+            "version": {
+                "extractor": "json_path",
+                "source_url": (
+                    "https://repo.tlauncher.org/tlauncher-sources/prod/release/"
+                    "tlauncher/appConfig.json"
+                ),
+                "path": "appVersion",
+            }
+        },
+    )
+    http_client = UrlPayloadHttpClient(
+        {
+            (
+                "https://repo.tlauncher.org/tlauncher-sources/prod/release/"
+                "tlauncher/appConfig.json"
+            ): {"appVersion": "2.9319"}
+        }
+    )
+
+    release = provider.resolve_latest_release(app_definition, http_client)
+
+    assert release.version == "2.9319"
+    assert release.download_url is None
+    assert http_client.requested_urls == [
+        "https://repo.tlauncher.org/tlauncher-sources/prod/release/" "tlauncher/appConfig.json"
+    ]
+
+
+def test_http_provider_resolves_version_only_from_configured_regex() -> None:
+    provider = HTTPProvider()
+    app_definition = AppDefinition(
+        app_id="org.example.app",
+        provider="http",
+        source_url="https://example.com/",
+        provider_config={
+            "version": {
+                "extractor": "regex",
+                "source_url": "https://example.com/releases",
+                "pattern": r"Version (?P<version>\d+\.\d+\.\d+)",
+            }
+        },
+    )
+
+    release = provider.resolve_latest_release(
+        app_definition,
+        UrlPayloadHttpClient({"https://example.com/releases": "<h1>Version 1.2.3</h1>"}),
+    )
+
+    assert release.version == "1.2.3"
+    assert release.download_url is None
+
+
+def test_http_provider_configured_regex_uses_first_unnamed_capture_group() -> None:
+    provider = HTTPProvider()
+    app_definition = AppDefinition(
+        app_id="org.example.app",
+        provider="http",
+        source_url="https://example.com/",
+        provider_config={
+            "version": {
+                "extractor": "regex",
+                "source_url": "https://example.com/releases",
+                "pattern": r"Version (\d+\.\d+\.\d+)",
+            }
+        },
+    )
+
+    release = provider.resolve_latest_release(
+        app_definition,
+        UrlPayloadHttpClient({"https://example.com/releases": "<h1>Version 1.2.3</h1>"}),
+    )
+
+    assert release.version == "1.2.3"
+
+
+def test_http_provider_configured_regex_no_match_errors_clearly() -> None:
+    provider = HTTPProvider()
+    app_definition = AppDefinition(
+        app_id="org.example.app",
+        provider="http",
+        source_url="https://example.com/",
+        provider_config={
+            "version": {
+                "extractor": "regex",
+                "source_url": "https://example.com/releases",
+                "pattern": r"Version (?P<version>\d+\.\d+\.\d+)",
+            }
+        },
+    )
+
+    with pytest.raises(ValueError, match="http version.pattern did not match"):
+        provider.resolve_latest_release(
+            app_definition,
+            UrlPayloadHttpClient({"https://example.com/releases": "<h1>No version</h1>"}),
+        )
+
+
+def test_http_provider_configured_version_can_use_static_download_url() -> None:
+    provider = HTTPProvider()
+    app_definition = AppDefinition(
+        app_id="org.tlauncher.tlauncher",
+        provider="http",
+        source_url="https://tlauncher.org/",
+        provider_config={
+            "version": {
+                "extractor": "json_path",
+                "source_url": "https://example.com/appConfig.json",
+                "path": "appVersion",
+            },
+            "download_url": "https://tlauncher.org/installer-linux",
+            "file_extension": ".sh",
+        },
+    )
+
+    release = provider.resolve_latest_release(
+        app_definition,
+        UrlPayloadHttpClient({"https://example.com/appConfig.json": {"appVersion": "2.9319"}}),
+    )
+
+    assert release.version == "2.9319"
+    assert release.download_url == "https://tlauncher.org/installer-linux"
+    assert release.file_extension == ".sh"
+
+
+def test_http_provider_configured_version_can_resolve_existing_artifact_config() -> None:
+    html = """
+    <html>
+      <body>
+        <a href="/downloads/example-app-1.2.3.AppImage">Download current</a>
+      </body>
+    </html>
+    """
+    provider = HTTPProvider()
+    app_definition = AppDefinition(
+        app_id="org.example.app",
+        provider="http",
+        source_url="https://example.com/releases/",
+        provider_config={
+            "version": {
+                "extractor": "regex",
+                "source_url": "https://example.com/latest",
+                "pattern": r"Version (?P<version>\d+\.\d+\.\d+)",
+            },
+            "download_url_path": "href",
+            "download_url_regex": r"example-app-(?P<version>\d+\.\d+\.\d+)\.AppImage$",
+            "version_path": "href",
+            "version_regex": r"example-app-(?P<version>\d+\.\d+\.\d+)\.AppImage$",
+            "file_extension": ".AppImage",
+        },
+    )
+
+    release = provider.resolve_latest_release(
+        app_definition,
+        UrlPayloadHttpClient(
+            {
+                "https://example.com/latest": "Version 1.2.3",
+                "https://example.com/releases/": html,
+            }
+        ),
+    )
+
+    assert release.version == "1.2.3"
+    assert release.download_url == "https://example.com/downloads/example-app-1.2.3.AppImage"
+    assert release.file_extension == ".AppImage"
 
 
 def test_http_provider_is_registered() -> None:

@@ -256,6 +256,59 @@ def test_plan_updates_without_version_keeps_latest_behavior(monkeypatch) -> None
     assert result.updates == []
 
 
+def test_plan_updates_allows_version_only_release_without_download_dir(monkeypatch) -> None:
+    release = ResolvedRelease(version="2.9319")
+    monkeypatch.setattr(
+        "obtainium_serverside.planner.get_provider",
+        lambda _provider_name: StubProvider(release),
+    )
+
+    result = plan_updates(
+        [
+            AppDefinition(
+                app_id="org.tlauncher.tlauncher",
+                provider="http",
+                source_url="https://tlauncher.org/",
+            )
+        ],
+        [InstalledApp(app_id="org.tlauncher.tlauncher", version="2.9318")],
+        http_client=StubHttpClient(),
+    )
+
+    assert result.errors == []
+    assert len(result.updates) == 1
+    assert result.updates[0].latest_version == "2.9319"
+    assert result.updates[0].download_url is None
+    assert result.updates[0].downloaded_apk_path is None
+
+
+def test_plan_updates_requires_download_url_when_download_dir_is_requested(
+    monkeypatch, tmp_path: Path
+) -> None:
+    release = ResolvedRelease(version="2.9319")
+    monkeypatch.setattr(
+        "obtainium_serverside.planner.get_provider",
+        lambda _provider_name: StubProvider(release),
+    )
+
+    result = plan_updates(
+        [
+            AppDefinition(
+                app_id="org.tlauncher.tlauncher",
+                provider="http",
+                source_url="https://tlauncher.org/",
+            )
+        ],
+        [InstalledApp(app_id="org.tlauncher.tlauncher", version="2.9318")],
+        download_dir=tmp_path,
+        http_client=StubHttpClient(),
+    )
+
+    assert result.updates == []
+    assert len(result.errors) == 1
+    assert "without a download URL" in result.errors[0].message
+
+
 def test_plan_updates_pin_on_provider_without_support_errors(monkeypatch) -> None:
     release = ResolvedRelease(
         version="2.4.3",
