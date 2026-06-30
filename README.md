@@ -120,6 +120,7 @@ release feed.
 - `download_url_regex`: regex used to select/extract the download URL
 - `version_path`: dot path to the version source
 - `version_regex`: regex used to extract the version; a named `version` group is supported
+- `download_url`: static download URL, useful with a separate `version` resolver
 - `release_name_path`: dot path to a release name
 - `release_name_template`: Python format string, for example `JetBrains Toolbox {version}`
 - `file_extension`: output/download extension, useful for compound extensions like `.tar.gz`
@@ -128,6 +129,60 @@ release feed.
 - `exclude_regex`: regex path/value exclusions
 - `prefer_false_path`: for latest resolution, prefer candidates where this path is falsey
 - `version_match_strategy`: `exact | strip_trailing_parenthetical`
+
+The HTTP provider can also resolve the latest version independently from artifact
+resolution through `provider_config.version`. This is useful for projects where a
+small JSON endpoint or page contains the current version, while the installer URL
+is stable or no artifact download is needed.
+
+- `version.extractor`: `json_path | regex`
+- `version.source_url`: URL to fetch for the version check; defaults to `source_url`
+- `version.path`: dot path for `json_path`
+- `version.pattern`: regex for `regex`; a named `version` group is supported
+
+TLauncher version-only check via its app config JSON:
+
+```json
+{
+  "apps": [
+    {
+      "app_id": "org.tlauncher.tlauncher",
+      "name": "TLauncher",
+      "provider": "http",
+      "source_url": "https://tlauncher.org/",
+      "provider_config": {
+        "version": {
+          "extractor": "json_path",
+          "source_url": "https://repo.tlauncher.org/tlauncher-sources/prod/release/tlauncher/appConfig.json",
+          "path": "appVersion"
+        }
+      }
+    }
+  ]
+}
+```
+
+For a webpage regex version check:
+
+```json
+{
+  "version": {
+    "extractor": "regex",
+    "source_url": "https://example.com/releases",
+    "pattern": "Version (?P<version>\\d+\\.\\d+\\.\\d+)"
+  }
+}
+```
+
+If downloads are needed with a separate version resolver, add either the existing
+HTTP artifact settings or a static `download_url`:
+
+```json
+{
+  "download_url": "https://tlauncher.org/installer-linux",
+  "file_extension": ".sh"
+}
+```
 
 JetBrains Toolbox App for Linux via JetBrains' release API:
 

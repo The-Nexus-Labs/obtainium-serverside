@@ -108,6 +108,11 @@ def plan_updates(
 
             downloaded_apk_path: str | None = None
             if resolved_download_dir is not None:
+                if not resolved_release.download_url:
+                    raise ValueError(
+                        f"app {app_definition.app_id} resolved version "
+                        f"{resolved_release.version} without a download URL"
+                    )
                 destination = build_download_path(
                     resolved_download_dir,
                     app_id=app_definition.app_id,

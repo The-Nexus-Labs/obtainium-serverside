@@ -56,7 +56,7 @@ class InstalledApp:
 @dataclass(frozen=True)
 class ResolvedRelease:
     version: str
-    download_url: str
+    download_url: str | None = None
     release_name: str | None = None
     file_extension: str = ".apk"
 
@@ -68,7 +68,7 @@ class PlannedUpdate:
     source_url: str
     latest_version: str
     installed_version: str | None
-    download_url: str
+    download_url: str | None
     downloaded_apk_path: str | None
     name: str | None = None
     release_name: str | None = None

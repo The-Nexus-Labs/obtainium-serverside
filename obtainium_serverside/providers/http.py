@@ -138,6 +138,13 @@ class HTTPProvider(BaseProvider):
     def resolve_latest_release(
         self, app_definition: AppDefinition, http_client: HttpClient
     ) -> ResolvedRelease:
+        configured_version = self._resolve_configured_version(app_definition, http_client)
+        if configured_version is not None:
+            artifact = self._resolve_configured_version_artifact(
+                app_definition, http_client, configured_version
+            )
+            return artifact or ResolvedRelease(version=configured_version)
+
         candidates = self._fetch_candidates(app_definition, http_client)
         ordered_candidates = self._order_latest_candidates(app_definition, candidates)
         resolved = self._first_matching_release(app_definition, ordered_candidates)
@@ -148,6 +155,13 @@ class HTTPProvider(BaseProvider):
     def resolve_pinned_release(
         self, app_definition: AppDefinition, http_client: HttpClient, version: str
     ) -> ResolvedRelease:
+        if self._version_config(app_definition) is not None:
+            pinned_version = version.strip()
+            artifact = self._resolve_configured_version_artifact(
+                app_definition, http_client, pinned_version
+            )
+            return artifact or ResolvedRelease(version=pinned_version)
+
         candidates = self._fetch_candidates(app_definition, http_client)
         resolved = self._first_matching_release(app_definition, candidates, pinned_version=version)
         if resolved is not None:
@@ -156,6 +170,124 @@ class HTTPProvider(BaseProvider):
             f"app {app_definition.app_id} pinned HTTP version {version.strip()} "
             f"was not found on {app_definition.source_url}"
         )
+
+    def _resolve_configured_version(
+        self, app_definition: AppDefinition, http_client: HttpClient
+    ) -> str | None:
+        config = self._version_config(app_definition)
+        if config is None:
+            return None
+
+        source_url = str(config.get("source_url", app_definition.source_url)).strip()
+        if not source_url:
+            raise ValueError(f"app {app_definition.app_id} http version.source_url is required")
+
+        extractor = str(config.get("extractor", "")).strip()
+        if not extractor:
+            raise ValueError(f"app {app_definition.app_id} http version.extractor is required")
+
+        payload = http_client.get_text(source_url)
+        if extractor == "json_path":
+            return self._version_from_json_path(app_definition, payload, config)
+        if extractor == "regex":
+            return self._version_from_regex(app_definition, payload, config)
+
+        raise ValueError(
+            f"app {app_definition.app_id} has unsupported http version extractor: {extractor}"
+        )
+
+    def _version_from_json_path(
+        self, app_definition: AppDefinition, payload: str, config: dict[str, object]
+    ) -> str:
+        path = str(config.get("path", "")).strip()
+        if not path:
+            raise ValueError(f"app {app_definition.app_id} http version.path is required")
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"app {app_definition.app_id} version source returned invalid JSON"
+            ) from exc
+
+        version = _first_path_value(decoded, path)
+        if version is None:
+            raise ValueError(f"app {app_definition.app_id} http version.path {path} was not found")
+        resolved = str(version).strip()
+        if not resolved:
+            raise ValueError(f"app {app_definition.app_id} http version.path {path} was empty")
+        return resolved
+
+    def _version_from_regex(
+        self, app_definition: AppDefinition, payload: str, config: dict[str, object]
+    ) -> str:
+        pattern = str(config.get("pattern", "")).strip()
+        if not pattern:
+            raise ValueError(f"app {app_definition.app_id} http version.pattern is required")
+        regex = _compile_regex(app_definition, "version.pattern", pattern)
+        match = regex.search(payload)
+        if match is None:
+            raise ValueError(f"app {app_definition.app_id} http version.pattern did not match")
+        version = _extract_regex_value(match)
+        if not version:
+            raise ValueError(f"app {app_definition.app_id} http version.pattern matched empty")
+        return version
+
+    def _resolve_configured_version_artifact(
+        self, app_definition: AppDefinition, http_client: HttpClient, version: str
+    ) -> ResolvedRelease | None:
+        static_download_url = str(app_definition.provider_config.get("download_url", "")).strip()
+        if static_download_url:
+            download_url = urljoin(app_definition.source_url, static_download_url)
+            return ResolvedRelease(
+                version=version,
+                download_url=download_url,
+                file_extension=self._file_extension(app_definition, download_url),
+            )
+
+        if not self._has_artifact_config(app_definition):
+            return None
+
+        candidates = self._fetch_candidates(app_definition, http_client)
+        resolved = self._first_matching_release(app_definition, candidates, pinned_version=version)
+        if resolved is None:
+            raise ValueError(
+                f"could not find a matching HTTP artifact for {app_definition.app_id} "
+                f"version {version}"
+            )
+        return ResolvedRelease(
+            version=version,
+            download_url=resolved.download_url,
+            release_name=resolved.release_name,
+            file_extension=resolved.file_extension,
+        )
+
+    @staticmethod
+    def _version_config(app_definition: AppDefinition) -> dict[str, object] | None:
+        config = app_definition.provider_config.get("version")
+        if config is None:
+            return None
+        if not isinstance(config, dict):
+            raise ValueError(f"app {app_definition.app_id} http version must be an object")
+        return dict(config)
+
+    @staticmethod
+    def _has_artifact_config(app_definition: AppDefinition) -> bool:
+        artifact_keys = {
+            "extractor",
+            "entries_path",
+            "download_url_path",
+            "download_url_regex",
+            "filters",
+            "filters_regex",
+            "exclude_regex",
+            "prefer_false_path",
+            "version_path",
+            "version_regex",
+            "release_name_path",
+            "release_name_template",
+            "append_version_to_release_name",
+        }
+        return any(key in app_definition.provider_config for key in artifact_keys)
 
     def _fetch_candidates(
         self, app_definition: AppDefinition, http_client: HttpClient
