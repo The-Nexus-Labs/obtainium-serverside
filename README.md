@@ -104,6 +104,10 @@ If an app is missing, it is treated as not installed.
 - `version_source`: `auto | tag_name | name`
 - `channel`: `stable | prerelease | any | release | beta`
 
+GitHub API requests use a token when provided, reducing rate-limit failures. Pass
+one with `--github-token`, or set `DEPENDENCY_UPDATE_GITHUB_TOKEN`, `GITHUB_TOKEN`,
+or `GH_TOKEN`.
+
 ### `fdroid`
 
 - no provider-specific options

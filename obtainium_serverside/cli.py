@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .http import HttpClient
 from .models import AppDefinition, InstalledApp
 from .planner import plan_updates
 
@@ -53,6 +54,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         required=False,
         help="Optional directory where APKs for updates will be downloaded",
     )
+    parser.add_argument(
+        "--github-token",
+        required=False,
+        help=(
+            "Optional GitHub API token for release checks. If omitted, "
+            "DEPENDENCY_UPDATE_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN is used when set."
+        ),
+    )
     return parser
 
 
@@ -66,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         app_definitions,
         installed_apps,
         download_dir=Path(args.download_dir) if args.download_dir else None,
+        http_client=HttpClient(github_token=args.github_token),
     )
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
