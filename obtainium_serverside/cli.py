@@ -42,7 +42,7 @@ def _load_installed_apps(path: Path) -> list[InstalledApp]:
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Server-side Obtainium-style APK updater")
+    parser = argparse.ArgumentParser(description="Server-side Obtainium-style artifact resolver")
     parser.add_argument("--config", required=True, help="Path to the app configuration JSON file")
     parser.add_argument(
         "--installed",
@@ -52,7 +52,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--download-dir",
         required=False,
-        help="Optional directory where APKs for updates will be downloaded",
+        help="Optional directory where artifacts for updates will be downloaded",
     )
     parser.add_argument(
         "--github-token",

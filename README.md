@@ -80,7 +80,7 @@ holding at, or **downgrading** to, an older version. Pinned updates are flagged 
 }
 ```
 
-## 📱 Installed input
+## Installed input
 
 ```json
 {
@@ -96,6 +96,19 @@ holding at, or **downgrading** to, an older version. Pinned updates are flagged 
 If an app is missing, it is treated as not installed.
 
 ## 🧩 Provider options
+
+### Artifact variants
+
+An app may define named `variants` and select one with its explicit `variant` field.
+The selected variant configuration is recursively merged over `provider_config`:
+nested objects merge key-by-key, while all other variant values replace base values.
+Variant selection is never inferred from the controller operating system.
+
+When multiple variants are defined, `variant` is required because artifact selection
+is ambiguous. An unknown requested variant is an error and is never replaced by a
+different variant. A sole variant is selected automatically because it is unambiguous.
+Configurations without `variants` retain their existing behavior, including the
+legacy `.apk` defaults used by the GitHub, F-Droid, and HTTP providers.
 
 ### `github`
 
@@ -211,16 +224,18 @@ JetBrains Toolbox App for Linux via JetBrains' release API:
 }
 ```
 
-Loxone App for Android via the Loxone downloads page:
+Loxone App with explicit Android and Windows artifact variants:
 
 ```json
 {
   "apps": [
     {
-      "app_id": "com.loxone.kerberos",
+      "app_id": "loxone",
       "name": "Loxone App",
       "provider": "http",
       "source_url": "https://www.loxone.com/enus/support/downloads/",
+      "version": "17.1.2 (17593)",
+      "variant": "windows",
       "provider_config": {
         "extractor": "html_json_attribute",
         "html_class": "loxone-software-download-root",
@@ -235,24 +250,28 @@ Loxone App for Android via the Loxone downloads page:
         "version_path": "version",
         "version_match_strategy": "strip_trailing_parenthetical",
         "download_url_path": "allVersions.groups.downloads.url",
-        "download_url_regex": "https://updatefiles\\.loxone\\.com/Android/Release/.*\\.apk$",
         "release_name_path": "title",
-        "append_version_to_release_name": true,
-        "file_extension": ".apk"
+        "append_version_to_release_name": true
+      },
+      "variants": {
+        "android": {
+          "download_url_regex": "https://updatefiles\\.loxone\\.com/Android/Release/.*\\.apk$",
+          "file_extension": ".apk"
+        },
+        "windows": {
+          "download_url_regex": "https://updatefiles\\.loxone\\.com/windows/Release/.*\\.exe$",
+          "file_extension": ".exe"
+        }
       }
     }
   ]
 }
 ```
 
-For the Loxone Linux `.deb`, use the same config with:
-
-```json
-{
-  "download_url_regex": "https://updatefiles\\.loxone\\.com/linux/Release/.*\\.deb$",
-  "file_extension": ".deb"
-}
-```
+The output uses `downloaded_artifact_path`. During the compatibility period it also
+includes `downloaded_apk_path` with the same value; callers should migrate to the
+generic field. Obtainium only resolves and downloads the selected artifact. Platform
+deployment code remains responsible for installing it.
 
 ## 🛠️ Dev
 

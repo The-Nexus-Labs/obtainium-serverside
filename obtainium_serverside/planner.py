@@ -106,7 +106,7 @@ def plan_updates(
             if not should_apply:
                 continue
 
-            downloaded_apk_path: str | None = None
+            downloaded_artifact_path: str | None = None
             if resolved_download_dir is not None:
                 if not resolved_release.download_url:
                     raise ValueError(
@@ -120,7 +120,7 @@ def plan_updates(
                     extension=resolved_release.file_extension,
                 )
                 client.download_file(resolved_release.download_url, destination)
-                downloaded_apk_path = str(destination)
+                downloaded_artifact_path = str(destination)
 
             updates.append(
                 PlannedUpdate(
@@ -131,7 +131,7 @@ def plan_updates(
                     installed_version=installed_version,
                     latest_version=resolved_release.version,
                     download_url=resolved_release.download_url,
-                    downloaded_apk_path=downloaded_apk_path,
+                    downloaded_artifact_path=downloaded_artifact_path,
                     release_name=resolved_release.release_name,
                     pinned=pinned,
                 )

@@ -126,6 +126,65 @@ def _loxone_linux_config(version: str, appimage_url: str, deb_url: str) -> dict[
     }
 
 
+def _loxone_multi_platform_config(version: str, apk_url: str, exe_url: str) -> dict[str, object]:
+    config = _loxone_android_config(version, apk_url, archived=False)
+    all_versions = config["allVersions"]
+    assert isinstance(all_versions, list)
+    all_versions.append(
+        {
+            "label": "Desktop",
+            "groups": [
+                {
+                    "label": "Windows",
+                    "platform": "windows",
+                    "downloads": [{"label": "Download", "url": exe_url}],
+                }
+            ],
+        }
+    )
+    return config
+
+
+def _loxone_variant_definition(variant: str | None) -> AppDefinition:
+    payload: dict[str, object] = {
+        "app_id": "loxone",
+        "provider": "http",
+        "source_url": "https://www.loxone.com/enus/support/downloads/",
+        "version": "17.1.2 (17593)",
+        "provider_config": {
+            "extractor": "html_json_attribute",
+            "html_class": "loxone-software-download-root",
+            "html_attr": "data-config",
+            "html_attr_encoding": "base64",
+            "entries_path": "config",
+            "filters": {"application": "app", "type": "release"},
+            "prefer_false_path": "archived",
+            "version_path": "version",
+            "version_match_strategy": "strip_trailing_parenthetical",
+            "download_url_path": "allVersions.groups.downloads.url",
+            "release_name_path": "title",
+            "append_version_to_release_name": True,
+        },
+        "variants": {
+            "android": {
+                "download_url_regex": (
+                    r"https://updatefiles\.loxone\.com/Android/Release/.*\.apk$"
+                ),
+                "file_extension": ".apk",
+            },
+            "windows": {
+                "download_url_regex": (
+                    r"https://updatefiles\.loxone\.com/windows/Release/.*\.exe$"
+                ),
+                "file_extension": ".exe",
+            },
+        },
+    }
+    if variant is not None:
+        payload["variant"] = variant
+    return AppDefinition.from_dict(payload)
+
+
 def test_http_provider_scrapes_versioned_download_link_from_html() -> None:
     html = """
     <html>
@@ -273,6 +332,69 @@ def test_http_provider_resolves_loxone_android_apk_from_structured_page_data() -
     assert release.download_url == "https://updatefiles.loxone.com/Android/Release/171116704.apk"
     assert release.release_name == "LOXONE App 17.1.1 (16704)"
     assert release.file_extension == ".apk"
+
+
+@pytest.mark.parametrize(
+    ("variant", "expected_url", "expected_extension"),
+    [
+        (
+            "android",
+            "https://updatefiles.loxone.com/Android/Release/171217593.apk",
+            ".apk",
+        ),
+        (
+            "windows",
+            "https://updatefiles.loxone.com/windows/Release/171217593.exe",
+            ".exe",
+        ),
+    ],
+)
+def test_http_provider_selects_requested_loxone_artifact_variant(
+    variant: str, expected_url: str, expected_extension: str
+) -> None:
+    html = _build_loxone_structured_html(
+        _loxone_multi_platform_config(
+            "17.1.2 (17593)",
+            "https://updatefiles.loxone.com/Android/Release/171217593.apk",
+            "https://updatefiles.loxone.com/windows/Release/171217593.exe",
+        )
+    )
+
+    release = HTTPProvider().resolve_release(
+        _loxone_variant_definition(variant), StubHttpClient(html)
+    )
+
+    assert release.download_url == expected_url
+    assert release.file_extension == expected_extension
+
+
+def test_app_definition_rejects_unknown_variant() -> None:
+    with pytest.raises(ValueError, match="requested unknown variant 'linux'"):
+        _loxone_variant_definition("linux")
+
+
+def test_app_definition_rejects_ambiguous_variants() -> None:
+    with pytest.raises(ValueError, match="ambiguous artifact variants"):
+        _loxone_variant_definition(None)
+
+
+def test_variant_config_recursively_merges_nested_mappings() -> None:
+    app = AppDefinition.from_dict(
+        {
+            "app_id": "example",
+            "provider": "http",
+            "source_url": "https://example.com/releases",
+            "variant": "windows",
+            "provider_config": {"filters": {"type": "release", "channel": "stable"}},
+            "variants": {"windows": {"filters": {"platform": "windows"}}},
+        }
+    )
+
+    assert app.provider_config["filters"] == {
+        "type": "release",
+        "channel": "stable",
+        "platform": "windows",
+    }
 
 
 def test_http_provider_resolves_loxone_pinned_archived_android_version() -> None:
