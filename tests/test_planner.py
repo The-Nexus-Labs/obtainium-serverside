@@ -110,10 +110,48 @@ def test_plan_updates_downloads_only_required_apps(monkeypatch, tmp_path: Path) 
     assert result.updates[0].latest_version == "16.2.2"
     assert result.updates[0].downloaded_apk_path is not None
     assert Path(result.updates[0].downloaded_apk_path).exists()
+    assert result.updates[0].downloaded_artifact_path is not None
+    serialized = result.updates[0].to_dict()
+    assert serialized["downloaded_artifact_path"] == result.updates[0].downloaded_artifact_path
+    assert serialized["downloaded_apk_path"] == result.updates[0].downloaded_artifact_path
     assert (
         http_client.downloads[0][0]
         == "https://updatefiles.loxone.com/Android/Release/162215280.apk"
     )
+
+
+def test_plan_updates_downloads_windows_artifact_with_exe_extension(
+    monkeypatch, tmp_path: Path
+) -> None:
+    release = ResolvedRelease(
+        version="17.1.2 (17593)",
+        download_url="https://updatefiles.loxone.com/windows/Release/171217593.exe",
+        file_extension=".exe",
+    )
+    monkeypatch.setattr(
+        "obtainium_serverside.planner.get_provider",
+        lambda _provider_name: StubProvider(release),
+    )
+
+    result = plan_updates(
+        [
+            AppDefinition(
+                app_id="loxone",
+                provider="http",
+                source_url="https://www.loxone.com/enus/support/downloads/",
+                variant="windows",
+            )
+        ],
+        [InstalledApp(app_id="loxone", version="17.1.1")],
+        download_dir=tmp_path,
+        http_client=StubHttpClient(),
+    )
+
+    assert result.errors == []
+    artifact_path = result.updates[0].downloaded_artifact_path
+    assert artifact_path is not None
+    assert Path(artifact_path).suffix == ".exe"
+    assert Path(artifact_path).exists()
 
 
 def test_plan_updates_skips_up_to_date_apps(monkeypatch) -> None:

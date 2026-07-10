@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "obtainium-serverside"
 version = "0.1.0"
-description = "Controller-side Android APK update resolver for automation workflows"
+description = "Controller-side update artifact resolver for automation workflows"
 authors = ["The Nexus Labs"]
 license = "MIT"
 readme = "README.md"
