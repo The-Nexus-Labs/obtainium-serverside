@@ -434,11 +434,14 @@ class HTTPProvider(BaseProvider):
 
         if version_regex:
             regex = _compile_regex(app_definition, "version_regex", version_regex)
+            version_template = str(
+                app_definition.provider_config.get("version_template", "")
+            ).strip()
             for value in values:
                 match = regex.search(str(value))
                 if match is None:
                     continue
-                version = _extract_regex_value(match)
+                version = _extract_regex_value(match, template=version_template)
                 if version:
                     return version
             return None
@@ -507,7 +510,12 @@ def _compile_regex(app_definition: AppDefinition, key: str, pattern: str) -> re.
         raise ValueError(f"app {app_definition.app_id} has invalid http {key}: {exc}") from exc
 
 
-def _extract_regex_value(match: re.Match[str]) -> str:
+def _extract_regex_value(match: re.Match[str], *, template: str = "") -> str:
+    if template:
+        try:
+            return template.format(**match.groupdict()).strip()
+        except (KeyError, ValueError) as exc:
+            raise ValueError(f"invalid HTTP version_template: {exc}") from exc
     value = match.groupdict().get("version")
     if value is None:
         value = match.group(1) if match.groups() else match.group(0)

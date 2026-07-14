@@ -215,6 +215,35 @@ def test_http_provider_scrapes_versioned_download_link_from_html() -> None:
     assert release.file_extension == ".AppImage"
 
 
+def test_http_provider_formats_version_from_named_regex_groups() -> None:
+    html = """
+    <html>
+      <body>
+        <a href="https://example.com/releases/171317707.apk">Download</a>
+      </body>
+    </html>
+    """
+    app_definition = AppDefinition(
+        app_id="org.example.app",
+        provider="http",
+        source_url="https://example.com/releases/",
+        provider_config={
+            "version_path": "href",
+            "version_regex": (
+                r"/(?P<major>\d{2})(?P<minor>\d)(?P<patch>\d)(?P<build>\d{5})[.]apk$"
+            ),
+            "version_template": "{major}.{minor}.{patch} ({build})",
+            "download_url_path": "href",
+            "download_url_regex": r"[.]apk$",
+        },
+    )
+
+    release = HTTPProvider().resolve_latest_release(app_definition, StubHttpClient(html))
+
+    assert release.version == "17.1.3 (17707)"
+    assert release.file_extension == ".apk"
+
+
 def test_http_provider_resolves_jetbrains_toolbox_from_release_json() -> None:
     payload = {
         "TBA": [
