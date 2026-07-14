@@ -34,6 +34,9 @@ pytestmark = pytest.mark.integration
 _LOXONE_CONFIG_RE = re.compile(
     r'class="[^"]*loxone-software-download-root[^"]*"[^>]*data-config="([^"]+)"'
 )
+_LOXONE_ANDROID_VERSION_RE = re.compile(
+    r"Android/Release/(?P<major>\d{2})(?P<minor>\d)(?P<patch>\d)(?P<build>\d{5})[.]apk"
+)
 
 
 def _jetbrains_toolbox_app() -> AppDefinition:
@@ -57,6 +60,7 @@ def _loxone_http_config(
     *, platform: str = "android", file_extension: str = ".apk"
 ) -> dict[str, object]:
     platform_segment = "Android" if platform == "android" else platform.split("_", 1)[0]
+    artifact_suffix = "[.]apk" if platform == "android" else "-amd64[.]deb"
     return {
         "extractor": "html_json_attribute",
         "html_class": "loxone-software-download-root",
@@ -65,14 +69,17 @@ def _loxone_http_config(
         "entries_path": "config",
         "filters": {"application": "app", "type": "release"},
         "prefer_false_path": "archived",
-        "version_path": "version",
-        "version_match_strategy": "strip_trailing_parenthetical",
+        "version_path": "allVersions.groups.downloads.url",
+        "version_regex": (
+            rf"{platform_segment}/Release/(?P<major>\d{{2}})(?P<minor>\d)"
+            rf"(?P<patch>\d)(?P<build>\d{{5}}){artifact_suffix}$"
+        ),
+        "version_template": "{major}.{minor}.{patch} ({build})",
         "download_url_path": "allVersions.groups.downloads.url",
         "download_url_regex": (
             rf"https://updatefiles\.loxone\.com/{platform_segment}/" rf"Release/.*{file_extension}$"
         ),
-        "release_name_path": "title",
-        "append_version_to_release_name": True,
+        "release_name_template": "Loxone App {version}",
         "file_extension": file_extension,
     }
 
@@ -157,9 +164,9 @@ def _offered_loxone_release_versions(html: str) -> list[str]:
             continue
         if str(config.get("type", "")).strip().lower() != "release":
             continue
-        version = str(config.get("version", "")).strip()
-        if version:
-            versions.append(version)
+        match = _LOXONE_ANDROID_VERSION_RE.search(json.dumps(config))
+        if match is not None:
+            versions.append("{major}.{minor}.{patch} ({build})".format(**match.groupdict()))
     return versions
 
 
